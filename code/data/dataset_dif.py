@@ -86,14 +86,14 @@ while cap.isOpened():
 
         if initial_pose is None:
             # 사용자 입력으로 초기 자세 저장
-            cv2.putText(frame, "Press 's' to set initial posture", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(frame, "Press 's' to set initial posture", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
 
         else:
             # 차이값 계산
             difference = compute_difference(initial_pose, current_pose)
 
             # 자세 라벨링
-            cv2.putText(frame, "Press 1-7 to label posture", (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(frame, "Press 1(good) 2(shoulder) 3(gobok_mok) 4(headtilt) 5(lean back)", (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
 
     # 키 입력 처리
     key = cv2.waitKey(1) & 0xFF
