@@ -102,7 +102,7 @@ while cap.isOpened():
     elif key == ord('s'):
         initial_pose = current_pose
         print("Initial posture saved!")
-    elif key in [ord(str(i)) for i in range(1, 5)] and initial_pose is not None:
+    elif key in [ord(str(i)) for i in range(1, 6)] and initial_pose is not None:
         label = labels[int(chr(key)) - 1]
         save_data(label, difference)
         print(f"Data saved for {label}")
