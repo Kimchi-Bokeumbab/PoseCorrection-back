@@ -1,15 +1,15 @@
 import torch.nn as nn
 
 class PostureClassifier(nn.Module):
-    def __init__(self):
+    def __init__(self, input_size=14, num_classes=5):
         super(PostureClassifier, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(14, 64),
+        self.classifier = nn.Sequential(
+            nn.Linear(input_size, 64),
             nn.ReLU(),
             nn.Linear(64, 32),
             nn.ReLU(),
-            nn.Linear(32, 5)
+            nn.Linear(32, num_classes)
         )
 
     def forward(self, x):
-        return self.net(x)
+        return self.classifier(x)
