@@ -87,7 +87,6 @@ cap = cv2.VideoCapture(0)
 collecting = False
 frame_buffer = []
 start_time = None
-target_frame_indices = [0, 45, 89]  # 약 3초 (FPS 30 기준)
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -119,10 +118,16 @@ while cap.isOpened():
             # 3초 넘으면 저장
             if elapsed >= 3.0:
                 collecting = False
-                if len(frame_buffer) >= 90:
-                    selected = [frame_buffer[i] for i in target_frame_indices]
+                n = len(frame_buffer)
+                if n >= 3:
+                    idx1 = 0
+                    idx2 = n // 2
+                    idx3 = n - 1
+                    selected = [frame_buffer[idx1], frame_buffer[idx2], frame_buffer[idx3]]
                     save_chunk(current_label, selected)
-                    print(f"✅ Saved 3-frame chunk for label: {current_label}")
+                    print(f"✅ Saved evenly spaced 3-frame chunk for label: {current_label}")
+                else:
+                    print("⚠️ Not enough frames collected. Try again.")
                 frame_buffer = []
 
         else:
