@@ -40,3 +40,7 @@ for epoch in range(20):
             total += y.size(0)
     acc = correct / total
     print(f"Epoch {epoch+1}, Loss: {total_loss:.4f}, Val Acc: {acc:.2%}")
+
+    # Save
+    torch.save(model.state_dict(), "code/model/rnn_posture_model.pth")
+    print("Model saved to rnn_posture_model.pth")
