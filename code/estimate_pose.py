@@ -7,7 +7,7 @@ from data.posture_data import PostureDataset
 
 # 모델 및 레이블 인코더 준비
 model = RNNPostureModel()
-model.load_state_dict(torch.load("code/model/rnn_posture_model.pth"))
+model.load_state_dict(torch.load("code/model/rnn_posture_model2.pth"))
 model.eval()
 
 # 임시로 레이블 인코더 불러오기 (데이터셋으로부터)
