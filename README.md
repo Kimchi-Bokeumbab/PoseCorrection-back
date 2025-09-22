@@ -38,7 +38,7 @@
     ```bash
     pip install -r requirements.txt
     ```
-3. 프로그램을 실행합니다.
+3. `code` 폴더로 이동 후 아래 명령어로 프로그램을 실행합니다.
     ```bash
-    python main.py
+    python -m server.predictor
     ```
