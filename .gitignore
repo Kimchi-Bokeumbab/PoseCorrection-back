@@ -458,5 +458,8 @@ FodyWeavers.xsd
 
 # End of https://www.toptal.com/developers/gitignore/api/windows,macos,visualstudio
 
-# venv
+# Python virtual environment
 venv/
+
+# test.db
+test.db
