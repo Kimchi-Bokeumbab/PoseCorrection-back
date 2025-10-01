@@ -29,7 +29,14 @@ def init_admin():
 init_admin()
 
 def get_current_user(token: str = Depends(auth.oauth2_scheme), db: Session = Depends(get_db)):
-    username = auth.verify_token(token)
+    payload = auth.verify_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    username = payload.get("sub")
+    if not username:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
     user = crud.get_user_by_username(db, username)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid token")

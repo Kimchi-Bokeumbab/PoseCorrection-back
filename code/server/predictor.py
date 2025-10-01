@@ -1,7 +1,10 @@
 # code/server/predictor.py
 import os
+import sys
+from functools import wraps
+
 import torch
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify, g, request
 from flask_cors import CORS
 
 # ===== 모델/라벨 로더 =====
@@ -16,6 +19,11 @@ ROOT_DIR = os.path.dirname(BASE_DIR)  # PoseCorrection-back/
 MODEL_PATH = os.path.join(BASE_DIR, "model", "rnn_posture_model2.pth")
 DATASET_PATH = os.path.join(BASE_DIR, "data", "dataset", "posture_chunk_data.csv")
 
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
+
+from app import auth  # noqa: E402  pylint: disable=wrong-import-position
+
 # 모델
 model = RNNPostureModel()
 state = torch.load(MODEL_PATH, map_location="cpu")
@@ -28,6 +36,32 @@ label_encoder = dummy_dataset.get_label_encoder()
 
 # 서버에 저장할 기준 좌표 (flatten 21 floats)
 baseline_21 = None
+
+
+def require_jwt(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        scheme, _, token = auth_header.partition(" ")
+
+        if scheme.lower() != "bearer" or not token:
+            return (
+                jsonify({"ok": False, "error": "unauthorized", "detail": "Missing bearer token"}),
+                401,
+            )
+
+        payload = auth.verify_token(token)
+        if not payload:
+            return (
+                jsonify({"ok": False, "error": "unauthorized", "detail": "Invalid token"}),
+                401,
+            )
+
+        g.jwt_payload = payload
+        return fn(*args, **kwargs)
+
+    return wrapper
+
 
 def flatten_kp7(kp7):
     """ kp7: [[x,y,z], ... ×7] -> len=21 리스트로 평탄화 """
@@ -48,6 +82,7 @@ def health():
 # ✅ 기준 좌표 설정: 프론트에서 Mediapipe로 뽑은 7점(x,y,z) 전달
 # Body: { "keypoints": [[x,y,z], ..., 7개] }
 @app.route("/set_initial", methods=["POST"])
+@require_jwt
 def set_initial():
     global baseline_21
     data = request.get_json(silent=True) or {}
@@ -70,6 +105,7 @@ def set_initial():
 # ✅ 예측: 프론트에서 최근 3프레임의 7점(x,y,z)을 보냄
 # Body: { "frames": [ [[x,y,z]×7], [[x,y,z]×7], [[x,y,z]×7] ] }
 @app.route("/predict", methods=["POST"])
+@require_jwt
 def predict():
     global baseline_21
     if baseline_21 is None:
