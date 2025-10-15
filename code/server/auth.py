@@ -1,9 +1,9 @@
-"""Utilities for user registration and authentication."""
+"""Utilities for user registration, authentication, and posture storage."""
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
-from typing import Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Tuple
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -13,10 +13,14 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 DB_PATH = os.path.join(ROOT_DIR, "users.db")
 
 
+NORMAL_LABELS: Tuple[str, ...] = ("정상", "normal", "Normal")
+
+
 @contextmanager
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     try:
+        conn.execute("PRAGMA foreign_keys = ON")
         yield conn
         conn.commit()
     finally:
@@ -24,7 +28,7 @@ def get_connection():
 
 
 def init_db() -> None:
-    """Create the user table when it does not already exist."""
+    """Create the core tables when they do not already exist."""
     with get_connection() as conn:
         conn.execute(
             """
@@ -36,10 +40,66 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS posture_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                posture_label TEXT NOT NULL,
+                score REAL,
+                recorded_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_posture_logs_user_time ON posture_logs(user_id, recorded_at)"
+        )
 
 
 def normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+def _coerce_timestamp(value: Optional[object]) -> Optional[datetime]:
+    if value is None:
+        return datetime.utcnow()
+    if isinstance(value, (int, float)):
+        return datetime.utcfromtimestamp(float(value))
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return datetime.utcnow()
+        try:
+            dt = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    return None
+
+
+def _coerce_score(value: Optional[object]) -> Tuple[bool, Optional[float]]:
+    if value is None:
+        return True, None
+    try:
+        return True, float(value)
+    except (TypeError, ValueError):
+        return False, None
+
+
+def _fetch_user_id(conn: sqlite3.Connection, email: str) -> Optional[int]:
+    cursor = conn.execute(
+        "SELECT id FROM users WHERE email = ?",
+        (email,),
+    )
+    row = cursor.fetchone()
+    return int(row[0]) if row else None
+
+
+def _normal_label_placeholders() -> str:
+    return ", ".join(["?"] * len(NORMAL_LABELS))
 
 
 def register_user(email: str, password: str) -> Tuple[bool, Optional[str]]:
@@ -93,9 +153,161 @@ def authenticate_user(email: str, password: str) -> Tuple[bool, Optional[str]]:
     return True, None
 
 
+def record_posture_event(
+    email: str,
+    label: str,
+    *,
+    score: Optional[object] = None,
+    recorded_at: Optional[object] = None,
+) -> Tuple[bool, Optional[str]]:
+    """Persist a posture prediction for the given user."""
+    if not isinstance(email, str):
+        return False, "email_required"
+    normalized_email = normalize_email(email)
+    if not normalized_email:
+        return False, "email_required"
+
+    if not isinstance(label, str) or not label.strip():
+        return False, "label_required"
+    trimmed_label = label.strip()
+
+    timestamp = _coerce_timestamp(recorded_at)
+    if timestamp is None:
+        return False, "invalid_timestamp"
+    score_ok, score_value = _coerce_score(score)
+    if not score_ok:
+        return False, "invalid_score"
+
+    with get_connection() as conn:
+        user_id = _fetch_user_id(conn, normalized_email)
+        if user_id is None:
+            return False, "user_not_found"
+        conn.execute(
+            """
+            INSERT INTO posture_logs (user_id, posture_label, score, recorded_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (user_id, trimmed_label, score_value, timestamp.isoformat()),
+        )
+
+    return True, None
+
+
+def get_posture_stats(
+    email: str,
+    *,
+    days: int = 7,
+) -> Tuple[Optional[Dict[str, object]], Optional[str]]:
+    if not isinstance(email, str):
+        return None, "email_required"
+    normalized_email = normalize_email(email)
+    if not normalized_email:
+        return None, "email_required"
+
+    try:
+        days_int = int(days)
+    except (TypeError, ValueError):
+        return None, "invalid_days"
+
+    if days_int <= 0:
+        return None, "invalid_days"
+
+    end_dt = datetime.utcnow()
+    start_dt = end_dt - timedelta(days=days_int)
+    start_iso = start_dt.isoformat()
+    end_iso = end_dt.isoformat()
+
+    hourly: List[Dict[str, object]] = []
+    weekday: List[Dict[str, object]] = []
+    labels: List[Dict[str, object]] = []
+
+    placeholders = _normal_label_placeholders()
+    hourly_query = f"""
+        SELECT strftime('%H', recorded_at) AS hour,
+               COUNT(*) AS total,
+               SUM(CASE WHEN posture_label NOT IN ({placeholders}) THEN 1 ELSE 0 END) AS bad,
+               AVG(score) AS avg_score
+        FROM posture_logs
+        WHERE user_id = ? AND recorded_at BETWEEN ? AND ?
+        GROUP BY hour
+        ORDER BY hour
+    """
+    weekday_query = f"""
+        SELECT strftime('%w', recorded_at) AS weekday,
+               COUNT(*) AS total,
+               SUM(CASE WHEN posture_label NOT IN ({placeholders}) THEN 1 ELSE 0 END) AS bad
+        FROM posture_logs
+        WHERE user_id = ? AND recorded_at BETWEEN ? AND ?
+        GROUP BY weekday
+        ORDER BY weekday
+    """
+
+    with get_connection() as conn:
+        user_id = _fetch_user_id(conn, normalized_email)
+        if user_id is None:
+            return None, "user_not_found"
+
+        hourly_rows = conn.execute(
+            hourly_query,
+            (*NORMAL_LABELS, user_id, start_iso, end_iso),
+        ).fetchall()
+        weekday_rows = conn.execute(
+            weekday_query,
+            (*NORMAL_LABELS, user_id, start_iso, end_iso),
+        ).fetchall()
+        label_rows = conn.execute(
+            """
+            SELECT posture_label, COUNT(*) AS cnt
+            FROM posture_logs
+            WHERE user_id = ? AND recorded_at BETWEEN ? AND ?
+            GROUP BY posture_label
+            ORDER BY cnt DESC
+            """,
+            (user_id, start_iso, end_iso),
+        ).fetchall()
+
+    for hour, total, bad, avg_score in hourly_rows:
+        entry: Dict[str, object] = {
+            "hour": f"{hour}:00",
+            "total": int(total),
+            "bad": int(bad or 0),
+        }
+        if avg_score is not None:
+            entry["avg_score"] = float(round(avg_score, 2))
+        hourly.append(entry)
+
+    weekday_names = ["일", "월", "화", "수", "목", "금", "토"]
+    for weekday_idx, total, bad in weekday_rows:
+        index = int(weekday_idx) % len(weekday_names)
+        entry = {
+            "weekday": weekday_names[index],
+            "total": int(total),
+            "bad": int(bad or 0),
+        }
+        weekday.append(entry)
+
+    total_events = 0
+    for label, count in label_rows:
+        count_int = int(count)
+        labels.append({"label": label, "count": count_int})
+        total_events += count_int
+
+    summary: Dict[str, object] = {
+        "range": {"start": start_iso, "end": end_iso},
+        "hourly": hourly,
+        "weekday": weekday,
+        "labels": labels,
+        "total_events": total_events,
+    }
+
+    return summary, None
+
+
 __all__ = [
     "DB_PATH",
     "init_db",
     "register_user",
     "authenticate_user",
+    "record_posture_event",
+    "get_posture_stats",
 ]

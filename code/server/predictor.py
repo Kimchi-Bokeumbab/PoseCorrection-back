@@ -15,9 +15,21 @@ if __package__ in (None, ""):
     current_dir = Path(__file__).resolve().parent
     if str(current_dir) not in sys.path:
         sys.path.append(str(current_dir))
-    from auth import authenticate_user, init_db, register_user
+    from auth import (
+        authenticate_user,
+        get_posture_stats,
+        init_db,
+        record_posture_event,
+        register_user,
+    )
 else:
-    from .auth import authenticate_user, init_db, register_user
+    from .auth import (
+        authenticate_user,
+        get_posture_stats,
+        init_db,
+        record_posture_event,
+        register_user,
+    )
 
 app = Flask(__name__)
 CORS(app)  # 프론트(127.0.0.1:5173)에서 요청 허용
@@ -122,6 +134,13 @@ def predict():
 
     data = request.get_json(silent=True) or {}
     frames = data.get("frames")
+    email = data.get("email")
+    recorded_at = data.get("recorded_at") or data.get("captured_at")
+    score = data.get("score")
+
+    if not isinstance(email, str) or not email.strip():
+        return jsonify({"ok": False, "error": "email_required"}), 400
+
     if not isinstance(frames, list) or len(frames) != 3:
         return jsonify({"ok": False, "error": "invalid_frames", "detail": "frames must be length=3"}), 400
 
@@ -143,7 +162,25 @@ def predict():
         pred_idx = out.argmax(dim=1).item()
         label = label_encoder.inverse_transform([pred_idx])[0]
 
-    return jsonify({"ok": True, "label": label})
+    stored, error = record_posture_event(email, label, score=score, recorded_at=recorded_at)
+    if not stored:
+        status = 404 if error == "user_not_found" else 400
+        return jsonify({"ok": False, "error": error}), status
+
+    return jsonify({"ok": True, "label": label, "stored": True})
+
+
+@app.route("/posture_stats", methods=["GET"])
+def posture_stats():
+    email = request.args.get("email")
+    days_param = request.args.get("days", default="7")
+
+    summary, error = get_posture_stats(email or "", days=days_param)
+    if summary is None:
+        status = 404 if error == "user_not_found" else 400
+        return jsonify({"ok": False, "error": error}), status
+
+    return jsonify({"ok": True, "summary": summary})
 
 if __name__ == "__main__":
     # 윈도우 로컬 개발
