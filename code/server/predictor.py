@@ -1,5 +1,8 @@
 # code/server/predictor.py
 import os
+import sys
+from pathlib import Path
+
 import torch
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -8,8 +11,17 @@ from flask_cors import CORS
 from model.rnn_posture_model import RNNPostureModel
 from data.posture_data import PostureDataset
 
+if __package__ in (None, ""):
+    current_dir = Path(__file__).resolve().parent
+    if str(current_dir) not in sys.path:
+        sys.path.append(str(current_dir))
+    from auth import authenticate_user, init_db, register_user
+else:
+    from .auth import authenticate_user, init_db, register_user
+
 app = Flask(__name__)
 CORS(app)  # 프론트(127.0.0.1:5173)에서 요청 허용
+init_db()
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # code/
 ROOT_DIR = os.path.dirname(BASE_DIR)  # PoseCorrection-back/
@@ -44,6 +56,39 @@ def flatten_kp7(kp7):
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"ok": True, "model": os.path.basename(MODEL_PATH)})
+
+
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.get_json(silent=True) or {}
+    email = data.get("email")
+    password = data.get("password")
+
+    ok, error = register_user(email, password)
+    if not ok:
+        return (
+            jsonify({"ok": False, "error": error}),
+            400,
+        )
+
+    return jsonify({"ok": True, "message": "user_registered"})
+
+
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.get_json(silent=True) or {}
+    email = data.get("email")
+    password = data.get("password")
+
+    ok, error = authenticate_user(email, password)
+    if not ok:
+        status = 404 if error == "user_not_found" else 401 if error == "invalid_credentials" else 400
+        return (
+            jsonify({"ok": False, "error": error}),
+            status,
+        )
+
+    return jsonify({"ok": True, "message": "login_success"})
 
 # ✅ 기준 좌표 설정: 프론트에서 Mediapipe로 뽑은 7점(x,y,z) 전달
 # Body: { "keypoints": [[x,y,z], ..., 7개] }
