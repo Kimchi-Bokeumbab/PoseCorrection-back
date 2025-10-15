@@ -38,10 +38,13 @@
     ```bash
     pip install -r requirements.txt
     ```
-3. `code` 폴더로 이동 후 아래 명령어로 프로그램을 실행합니다.
+3. 프로젝트 루트에서 `code` 폴더로 이동한 뒤 아래 명령어로 서버를 실행합니다.
     ```bash
+    cd code
     python -m server.predictor
     ```
+    위 명령으로 Flask 서버가 구동되면 `/register`·`/login` 엔드포인트도 함께 활성화되며,
+    첫 실행 시 자동으로 `../users.db` 데이터베이스 파일이 생성됩니다.
 
 ## 인증 기능 상세 설명
 
