@@ -57,13 +57,17 @@
 - `users` 테이블에는 `email`, `password_hash`, `created_at` 필드를 저장합니다.
 - `posture_logs` 테이블에는 각 예측에 대한 `user_id`, `posture_label`,
   선택적 `score`, `recorded_at`(ISO8601) 값을 저장합니다.
+- `user_baselines` 테이블에는 사용자별 기준 자세(21개 좌표 배열)와 생성/갱신 시각을 저장합니다.
 - 이메일은 소문자로 정규화한 후 중복 여부를 검사하고, 비밀번호는 해시(SHA-256 기반 Werkzeug 유틸리티)를 적용해 저장합니다.
 
 ### 입력 검증 및 에러 코드
 - 이메일/비밀번호가 누락되었거나 문자열이 아닐 경우 `email_and_password_required` 오류를 반환합니다.
 - 이메일이 공백일 때는 `email_required`, 비밀번호 길이가 6자 미만이면 `password_too_short` 오류를 반환합니다.
 - 이미 가입된 이메일은 `email_already_used`, 존재하지 않는 계정 로그인 시 `user_not_found`, 비밀번호 불일치 시 `invalid_credentials` 오류를 제공합니다.
-- `/predict` 요청에서 좌표 길이가 잘못되면 `invalid_frames` 또는 `invalid_frame`, 기준 자세가 없으면 `no_baseline` 오류를 반환합니다.
+- `/set_initial` 또는 `/predict` 요청에서 이메일이 없으면 `email_required`,
+  저장된 기준 자세가 없으면 `baseline_not_set`, 손상된 데이터면 `baseline_corrupted`
+  오류를 반환합니다.
+- `/predict` 요청에서 좌표 길이가 잘못되면 `invalid_frames` 또는 `invalid_frame` 오류를 반환합니다.
 - 예측 결과를 저장할 때 이메일이 없으면 `email_required`, 점수 형식이 잘못되면 `invalid_score`, 시간 포맷이 맞지 않으면 `invalid_timestamp` 오류가 발생합니다.
 - `/posture_stats`에서 기간 파라미터가 숫자가 아니거나 0 이하이면 `invalid_days` 오류가 발생합니다.
 
@@ -94,6 +98,24 @@
     (선택적) 자세 점수입니다.
   - 정상 동작 시 `{ "ok": true, "label": "거북목", "stored": true }`와 같이
     분류 라벨을 반환하고, 같은 정보가 데이터베이스에 저장됩니다.
+- **기준 자세 저장**: `POST /set_initial`
+  - Body 예시:
+    ```json
+    {
+      "email": "user@example.com",
+      "keypoints": [
+        [x, y, z],
+        [x, y, z],
+        [x, y, z],
+        [x, y, z],
+        [x, y, z],
+        [x, y, z],
+        [x, y, z]
+      ]
+    }
+    ```
+  - Mediapipe 등에서 측정한 7개 관절(x, y, z)을 flatten(21개)하여 사용자별로 저장합니다.
+  - 이미 기준 자세가 있다면 덮어쓰며, 이후 `/predict`에서 자동으로 불러옵니다.
 - **저장 데이터 통계 조회**: `GET /posture_stats?email=user@example.com&days=7`
   - 가입된 사용자의 최근 `days`일(기본 7일) 동안 기록을 집계합니다.
   - 응답 예시:

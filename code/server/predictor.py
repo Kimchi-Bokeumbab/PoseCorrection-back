@@ -17,18 +17,22 @@ if __package__ in (None, ""):
         sys.path.append(str(current_dir))
     from auth import (
         authenticate_user,
+        fetch_user_baseline,
         get_posture_stats,
         init_db,
         record_posture_event,
         register_user,
+        store_user_baseline,
     )
 else:
     from .auth import (
         authenticate_user,
+        fetch_user_baseline,
         get_posture_stats,
         init_db,
         record_posture_event,
         register_user,
+        store_user_baseline,
     )
 
 app = Flask(__name__)
@@ -49,9 +53,6 @@ model.eval()
 # 라벨 인코더
 dummy_dataset = PostureDataset(DATASET_PATH)
 label_encoder = dummy_dataset.get_label_encoder()
-
-# 서버에 저장할 기준 좌표 (flatten 21 floats)
-baseline_21 = None
 
 def flatten_kp7(kp7):
     """ kp7: [[x,y,z], ... ×7] -> len=21 리스트로 평탄화 """
@@ -106,10 +107,14 @@ def login():
 # Body: { "keypoints": [[x,y,z], ..., 7개] }
 @app.route("/set_initial", methods=["POST"])
 def set_initial():
-    global baseline_21
     data = request.get_json(silent=True) or {}
 
+    email = data.get("email")
     kp7 = data.get("keypoints")
+
+    if not isinstance(email, str) or not email.strip():
+        return jsonify({"ok": False, "error": "email_required"}), 400
+
     if not isinstance(kp7, list):
         return jsonify({"ok": False, "error": "invalid_payload", "detail": "keypoints missing/invalid"}), 400
     if len(kp7) != 7:
@@ -119,19 +124,18 @@ def set_initial():
     if flat is None or len(flat) != 21:
         return jsonify({"ok": False, "error": "invalid_landmarks", "detail": f"expected 21, got {len(flat) if flat else 0}"}), 400
 
-    baseline_21 = flat
-    print("[SET_INITIAL] baseline_21 len:", len(baseline_21))
-    print("[SET_INITIAL] sample:", baseline_21[:6], "...")
-    return jsonify({"ok": True, "message": "baseline set"})
+    saved, error = store_user_baseline(email, flat)
+    if not saved:
+        status = 404 if error == "user_not_found" else 400
+        return jsonify({"ok": False, "error": error}), status
+
+    print("[SET_INITIAL] stored baseline for", email)
+    return jsonify({"ok": True, "message": "baseline_stored"})
 
 # ✅ 예측: 프론트에서 최근 3프레임의 7점(x,y,z)을 보냄
 # Body: { "frames": [ [[x,y,z]×7], [[x,y,z]×7], [[x,y,z]×7] ] }
 @app.route("/predict", methods=["POST"])
 def predict():
-    global baseline_21
-    if baseline_21 is None:
-        return jsonify({"ok": False, "error": "no_baseline", "detail": "call /set_initial first"}), 400
-
     data = request.get_json(silent=True) or {}
     frames = data.get("frames")
     email = data.get("email")
@@ -140,6 +144,11 @@ def predict():
 
     if not isinstance(email, str) or not email.strip():
         return jsonify({"ok": False, "error": "email_required"}), 400
+
+    baseline_21, baseline_error = fetch_user_baseline(email)
+    if baseline_21 is None:
+        status = 404 if baseline_error == "user_not_found" else 400
+        return jsonify({"ok": False, "error": baseline_error or "baseline_missing"}), status
 
     if not isinstance(frames, list) or len(frames) != 3:
         return jsonify({"ok": False, "error": "invalid_frames", "detail": "frames must be length=3"}), 400

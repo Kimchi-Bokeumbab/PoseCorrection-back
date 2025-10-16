@@ -1,4 +1,5 @@
 """Utilities for user registration, authentication, and posture storage."""
+import json
 import os
 import sqlite3
 from contextlib import contextmanager
@@ -54,6 +55,17 @@ def init_db() -> None:
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_posture_logs_user_time ON posture_logs(user_id, recorded_at)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_baselines (
+                user_id INTEGER PRIMARY KEY,
+                baseline TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
         )
 
 
@@ -193,6 +205,74 @@ def record_posture_event(
     return True, None
 
 
+def store_user_baseline(email: str, baseline: List[float]) -> Tuple[bool, Optional[str]]:
+    """Persist the 21-value baseline posture for the user."""
+    if not isinstance(email, str):
+        return False, "email_required"
+    normalized_email = normalize_email(email)
+    if not normalized_email:
+        return False, "email_required"
+
+    if not isinstance(baseline, list) or len(baseline) != 21:
+        return False, "baseline_invalid"
+
+    try:
+        coerced = [float(value) for value in baseline]
+    except (TypeError, ValueError):
+        return False, "baseline_invalid"
+
+    timestamp = datetime.utcnow().isoformat()
+    encoded = json.dumps(coerced, ensure_ascii=False)
+
+    with get_connection() as conn:
+        user_id = _fetch_user_id(conn, normalized_email)
+        if user_id is None:
+            return False, "user_not_found"
+        conn.execute(
+            """
+            INSERT INTO user_baselines (user_id, baseline, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                baseline = excluded.baseline,
+                updated_at = excluded.updated_at
+            """,
+            (user_id, encoded, timestamp, timestamp),
+        )
+
+    return True, None
+
+
+def fetch_user_baseline(email: str) -> Tuple[Optional[List[float]], Optional[str]]:
+    """Load the stored baseline posture for the user."""
+    if not isinstance(email, str):
+        return None, "email_required"
+    normalized_email = normalize_email(email)
+    if not normalized_email:
+        return None, "email_required"
+
+    with get_connection() as conn:
+        user_id = _fetch_user_id(conn, normalized_email)
+        if user_id is None:
+            return None, "user_not_found"
+        row = conn.execute(
+            "SELECT baseline FROM user_baselines WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+
+    if row is None:
+        return None, "baseline_not_set"
+
+    try:
+        values = json.loads(row[0])
+        if not isinstance(values, list) or len(values) != 21:
+            return None, "baseline_corrupted"
+        coerced = [float(value) for value in values]
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None, "baseline_corrupted"
+
+    return coerced, None
+
+
 def get_posture_stats(
     email: str,
     *,
@@ -310,4 +390,6 @@ __all__ = [
     "authenticate_user",
     "record_posture_event",
     "get_posture_stats",
+    "store_user_baseline",
+    "fetch_user_baseline",
 ]
