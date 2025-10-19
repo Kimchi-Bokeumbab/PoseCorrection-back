@@ -1,5 +1,8 @@
 # code/server/predictor.py
 import os
+import sys
+from pathlib import Path
+
 import torch
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -8,8 +11,33 @@ from flask_cors import CORS
 from model.rnn_posture_model import RNNPostureModel
 from data.posture_data import PostureDataset
 
+if __package__ in (None, ""):
+    current_dir = Path(__file__).resolve().parent
+    if str(current_dir) not in sys.path:
+        sys.path.append(str(current_dir))
+    from auth import (
+        authenticate_user,
+        fetch_user_baseline,
+        get_posture_stats,
+        init_db,
+        record_posture_event,
+        register_user,
+        store_user_baseline,
+    )
+else:
+    from .auth import (
+        authenticate_user,
+        fetch_user_baseline,
+        get_posture_stats,
+        init_db,
+        record_posture_event,
+        register_user,
+        store_user_baseline,
+    )
+
 app = Flask(__name__)
 CORS(app)  # 프론트(127.0.0.1:5173)에서 요청 허용
+init_db()
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # code/
 ROOT_DIR = os.path.dirname(BASE_DIR)  # PoseCorrection-back/
@@ -25,9 +53,6 @@ model.eval()
 # 라벨 인코더
 dummy_dataset = PostureDataset(DATASET_PATH)
 label_encoder = dummy_dataset.get_label_encoder()
-
-# 서버에 저장할 기준 좌표 (flatten 21 floats)
-baseline_21 = None
 
 def flatten_kp7(kp7):
     """ kp7: [[x,y,z], ... ×7] -> len=21 리스트로 평탄화 """
@@ -45,14 +70,51 @@ def flatten_kp7(kp7):
 def health():
     return jsonify({"ok": True, "model": os.path.basename(MODEL_PATH)})
 
+
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.get_json(silent=True) or {}
+    email = data.get("email")
+    password = data.get("password")
+
+    ok, error = register_user(email, password)
+    if not ok:
+        return (
+            jsonify({"ok": False, "error": error}),
+            400,
+        )
+
+    return jsonify({"ok": True, "message": "user_registered"})
+
+
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.get_json(silent=True) or {}
+    email = data.get("email")
+    password = data.get("password")
+
+    ok, error = authenticate_user(email, password)
+    if not ok:
+        status = 404 if error == "user_not_found" else 401 if error == "invalid_credentials" else 400
+        return (
+            jsonify({"ok": False, "error": error}),
+            status,
+        )
+
+    return jsonify({"ok": True, "message": "login_success"})
+
 # ✅ 기준 좌표 설정: 프론트에서 Mediapipe로 뽑은 7점(x,y,z) 전달
 # Body: { "keypoints": [[x,y,z], ..., 7개] }
 @app.route("/set_initial", methods=["POST"])
 def set_initial():
-    global baseline_21
     data = request.get_json(silent=True) or {}
 
+    email = data.get("email")
     kp7 = data.get("keypoints")
+
+    if not isinstance(email, str) or not email.strip():
+        return jsonify({"ok": False, "error": "email_required"}), 400
+
     if not isinstance(kp7, list):
         return jsonify({"ok": False, "error": "invalid_payload", "detail": "keypoints missing/invalid"}), 400
     if len(kp7) != 7:
@@ -62,21 +124,32 @@ def set_initial():
     if flat is None or len(flat) != 21:
         return jsonify({"ok": False, "error": "invalid_landmarks", "detail": f"expected 21, got {len(flat) if flat else 0}"}), 400
 
-    baseline_21 = flat
-    print("[SET_INITIAL] baseline_21 len:", len(baseline_21))
-    print("[SET_INITIAL] sample:", baseline_21[:6], "...")
-    return jsonify({"ok": True, "message": "baseline set"})
+    saved, error = store_user_baseline(email, flat)
+    if not saved:
+        status = 404 if error == "user_not_found" else 400
+        return jsonify({"ok": False, "error": error}), status
+
+    print("[SET_INITIAL] stored baseline for", email)
+    return jsonify({"ok": True, "message": "baseline_stored"})
 
 # ✅ 예측: 프론트에서 최근 3프레임의 7점(x,y,z)을 보냄
 # Body: { "frames": [ [[x,y,z]×7], [[x,y,z]×7], [[x,y,z]×7] ] }
 @app.route("/predict", methods=["POST"])
 def predict():
-    global baseline_21
-    if baseline_21 is None:
-        return jsonify({"ok": False, "error": "no_baseline", "detail": "call /set_initial first"}), 400
-
     data = request.get_json(silent=True) or {}
     frames = data.get("frames")
+    email = data.get("email")
+    recorded_at = data.get("recorded_at") or data.get("captured_at")
+    score = data.get("score")
+
+    if not isinstance(email, str) or not email.strip():
+        return jsonify({"ok": False, "error": "email_required"}), 400
+
+    baseline_21, baseline_error = fetch_user_baseline(email)
+    if baseline_21 is None:
+        status = 404 if baseline_error == "user_not_found" else 400
+        return jsonify({"ok": False, "error": baseline_error or "baseline_missing"}), status
+
     if not isinstance(frames, list) or len(frames) != 3:
         return jsonify({"ok": False, "error": "invalid_frames", "detail": "frames must be length=3"}), 400
 
@@ -98,7 +171,25 @@ def predict():
         pred_idx = out.argmax(dim=1).item()
         label = label_encoder.inverse_transform([pred_idx])[0]
 
-    return jsonify({"ok": True, "label": label})
+    stored, error = record_posture_event(email, label, score=score, recorded_at=recorded_at)
+    if not stored:
+        status = 404 if error == "user_not_found" else 400
+        return jsonify({"ok": False, "error": error}), status
+
+    return jsonify({"ok": True, "label": label, "stored": True})
+
+
+@app.route("/posture_stats", methods=["GET"])
+def posture_stats():
+    email = request.args.get("email")
+    days_param = request.args.get("days", default="7")
+
+    summary, error = get_posture_stats(email or "", days=days_param)
+    if summary is None:
+        status = 404 if error == "user_not_found" else 400
+        return jsonify({"ok": False, "error": error}), status
+
+    return jsonify({"ok": True, "summary": summary})
 
 if __name__ == "__main__":
     # 윈도우 로컬 개발
