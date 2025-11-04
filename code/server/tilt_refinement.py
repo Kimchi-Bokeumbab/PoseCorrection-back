@@ -121,28 +121,73 @@ def refine_tilt_prediction(
     dominance = shoulder_gap - ear_gap
 
     # 귀와 어깨가 상반된 방향으로 움직였다면 신뢰하지 않습니다.
-    if shoulder_signed * ear_signed < 0:
+    if shoulder_signed * ear_signed < -0.005:
         return initial_label
 
-    # 귀 높이 차이가 충분히 크고 어깨보다 확실히 우세하면 head_tilt 로 간주합니다.
-    if (
-        ear_gap >= 0.045
-        and ratio >= 1.25
-        and dominance <= -0.02
-    ):
-        return "head_tilt"
+    head_score = 0.0
+    shoulder_score = 0.0
 
-    # 어깨 높이 차이가 귀보다 확실히 우세하고 절대값도 충분히 크면 shoulder_tilt 로 간주합니다.
-    if (
-        shoulder_gap >= 0.065
-        and ratio <= 0.6
-        and dominance >= 0.035
-        and abs(shoulder_signed) >= abs(ear_signed) * 0.9
-    ):
-        return "shoulder_tilt"
+    # 귀/어깨 간 절대 높이 차이를 기반으로 점수를 계산합니다.
+    if ear_gap >= 0.04:
+        head_score += 1.0
+    if ear_gap >= 0.055:
+        head_score += 0.5
+    if shoulder_gap >= 0.055:
+        shoulder_score += 1.0
+    if shoulder_gap >= 0.08:
+        shoulder_score += 0.5
+
+    # 비율이 특정 방향으로 크게 치우칠수록 해당 점수를 증가시킵니다.
+    if ratio >= 1.2:
+        head_score += 1.0
+    if ratio >= 1.5:
+        head_score += 0.5
+    if ratio <= 0.8:
+        shoulder_score += 0.5
+    if ratio <= 0.55:
+        shoulder_score += 1.0
+
+    # dominance는 어깨 대비 귀의 우세 여부를 측정합니다.
+    if dominance <= -0.025:
+        head_score += 1.0
+    if dominance <= -0.055:
+        head_score += 0.5
+    if dominance >= 0.025:
+        shoulder_score += 1.0
+    if dominance >= 0.055:
+        shoulder_score += 0.5
+
+    # signed delta의 상대적 크기가 동일 방향으로 유지되는지를 확인합니다.
+    abs_ear = abs(ear_signed)
+    abs_shoulder = abs(shoulder_signed)
+
+    if abs_ear >= abs_shoulder * 1.15:
+        head_score += 0.75
+    if abs_ear >= abs_shoulder * 1.35:
+        head_score += 0.25
+    if abs_shoulder >= abs_ear * 1.15:
+        shoulder_score += 0.75
+    if abs_shoulder >= abs_ear * 1.35:
+        shoulder_score += 0.25
+
+    if abs_ear >= 0.035:
+        head_score += 0.5
+    if abs_ear >= 0.05:
+        head_score += 0.25
+    if abs_shoulder >= 0.045:
+        shoulder_score += 0.5
+    if abs_shoulder >= 0.065:
+        shoulder_score += 0.25
+
+    # 점수 차이가 충분히 크고 일정 기준 이상일 때만 덮어씁니다.
+    override_label = initial_label
+    if head_score >= 3.0 and head_score >= shoulder_score + 0.75:
+        override_label = "head_tilt"
+    elif shoulder_score >= 3.0 and shoulder_score >= head_score + 0.75:
+        override_label = "shoulder_tilt"
 
     # 모호한 경우에는 기존 RNN 예측 유지
-    return initial_label
+    return override_label
 
 
 __all__ = [
