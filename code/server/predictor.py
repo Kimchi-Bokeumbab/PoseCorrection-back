@@ -172,8 +172,15 @@ def predict():
         pred_idx = out.argmax(dim=1).item()
         label = label_encoder.inverse_transform([pred_idx])[0]
 
+        probs = torch.softmax(out[0], dim=0)
+        if probs.numel() >= 2:
+            top2 = torch.topk(probs, k=2)
+            margin = (top2.values[0] - top2.values[1]).item()
+        else:
+            margin = 1.0
+
     if label in {"shoulder_tilt", "head_tilt"}:
-        refined_label = refine_tilt_prediction(label, diffs)
+        refined_label = refine_tilt_prediction(label, diffs, initial_margin=margin)
         label = refined_label
 
     stored, error = record_posture_event(email, label, score=score, recorded_at=recorded_at)

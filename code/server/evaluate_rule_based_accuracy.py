@@ -67,6 +67,13 @@ def evaluate(model_path: Path, dataset_path: Path, batch_size: int, device: torc
 
             logits = model(batch_inputs)
             raw_predictions = logits.argmax(dim=1)
+            probabilities = torch.softmax(logits, dim=1)
+
+            if probabilities.size(1) >= 2:
+                top2 = torch.topk(probabilities, k=2, dim=1)
+                margins = top2.values[:, 0] - top2.values[:, 1]
+            else:
+                margins = torch.ones(probabilities.size(0), device=probabilities.device)
 
             correct_rnn += (raw_predictions == batch_targets).sum().item()
 
@@ -80,7 +87,12 @@ def evaluate(model_path: Path, dataset_path: Path, batch_size: int, device: torc
                 refined_label = raw_label
                 if raw_label in tilt_labels:
                     diff_sequence: Sequence[Sequence[float]] = inputs_cpu[idx].tolist()
-                    refined_label = refine_tilt_prediction(raw_label, diff_sequence)
+                    margin = margins[idx].item()
+                    refined_label = refine_tilt_prediction(
+                        raw_label,
+                        diff_sequence,
+                        initial_margin=margin,
+                    )
 
                     tilt_cases += 1
                     if refined_label != raw_label:
