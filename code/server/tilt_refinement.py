@@ -66,18 +66,28 @@ def refine_tilt_prediction(
     if shoulder_gap is None or ear_gap is None:
         return initial_label
 
-    MIN_EAR_GAP = 0.02
-    MIN_SHOULDER_GAP = 0.02
-    HEAD_RATIO_THRESHOLD = 0.8
-    SHOULDER_DOMINANCE = 1.2
-
-    if shoulder_gap < MIN_SHOULDER_GAP and ear_gap < MIN_EAR_GAP:
+    # 노이즈를 제거하기 위해 양쪽 모두 거의 움직임이 없으면 RNN 결과를 그대로 사용합니다.
+    max_gap = max(shoulder_gap, ear_gap)
+    if max_gap < 0.03:
         return initial_label
 
-    if ear_gap >= MIN_EAR_GAP and ear_gap >= shoulder_gap * HEAD_RATIO_THRESHOLD:
+    ratio = ear_gap / (shoulder_gap + 1e-6)
+    dominance = shoulder_gap - ear_gap
+
+    # 귀 높이 차이가 충분히 크고 어깨보다 확실히 우세하면 head_tilt 로 간주합니다.
+    if (
+        ear_gap >= 0.04
+        and ratio >= 1.15
+        and dominance <= -0.015
+    ):
         return "head_tilt"
 
-    if shoulder_gap >= MIN_SHOULDER_GAP and shoulder_gap >= ear_gap * SHOULDER_DOMINANCE:
+    # 어깨 높이 차이가 귀보다 확실히 우세하고 절대값도 충분히 크면 shoulder_tilt 로 간주합니다.
+    if (
+        shoulder_gap >= 0.06
+        and ratio <= 0.7
+        and dominance >= 0.03
+    ):
         return "shoulder_tilt"
 
     # 모호한 경우에는 기존 RNN 예측 유지
