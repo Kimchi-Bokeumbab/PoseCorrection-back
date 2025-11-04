@@ -24,6 +24,7 @@ if __package__ in (None, ""):
         register_user,
         store_user_baseline,
     )
+    from tilt_refinement import refine_tilt_prediction
 else:
     from .auth import (
         authenticate_user,
@@ -34,6 +35,7 @@ else:
         register_user,
         store_user_baseline,
     )
+    from .tilt_refinement import refine_tilt_prediction
 
 app = Flask(__name__)
 CORS(app)  # 프론트(127.0.0.1:5173)에서 요청 허용
@@ -54,18 +56,6 @@ model.eval()
 dummy_dataset = PostureDataset(DATASET_PATH)
 label_encoder = dummy_dataset.get_label_encoder()
 
-KEYPOINT_ORDER = [
-    "left_shoulder",
-    "right_shoulder",
-    "left_ear",
-    "right_ear",
-    "left_eye",
-    "right_eye",
-    "nose",
-]
-
-KEYPOINT_TO_INDEX = {name: idx for idx, name in enumerate(KEYPOINT_ORDER)}
-
 def flatten_kp7(kp7):
     """ kp7: [[x,y,z], ... ×7] -> len=21 리스트로 평탄화 """
     flat = []
@@ -77,57 +67,6 @@ def flatten_kp7(kp7):
             return None
         flat.extend([float(x), float(y), float(z)])
     return flat  # len=21
-
-
-def _average_vertical_gap(diff_sequence, left_key, right_key):
-    """diff_sequence(list[list[float]]): frame별 baseline 차분(21길이)"""
-
-    left_idx = KEYPOINT_TO_INDEX[left_key] * 3 + 1  # dy 위치
-    right_idx = KEYPOINT_TO_INDEX[right_key] * 3 + 1
-
-    values = []
-    for frame_diff in diff_sequence:
-        try:
-            left_dy = frame_diff[left_idx]
-            right_dy = frame_diff[right_idx]
-        except (TypeError, IndexError):
-            return None
-        values.append(abs(left_dy - right_dy))
-
-    if not values:
-        return 0.0
-    return sum(values) / len(values)
-
-
-def refine_tilt_prediction(initial_label, diff_sequence):
-    """RNN이 shoulder/head tilt로 예측 시 추가 규칙으로 재분류"""
-
-    if not diff_sequence:
-        return initial_label
-
-    shoulder_gap = _average_vertical_gap(diff_sequence, "left_shoulder", "right_shoulder")
-    ear_gap = _average_vertical_gap(diff_sequence, "left_ear", "right_ear")
-
-    if shoulder_gap is None or ear_gap is None:
-        return initial_label
-
-    MIN_EAR_GAP = 0.02
-    MIN_SHOULDER_GAP = 0.02
-    HEAD_RATIO_THRESHOLD = 0.8
-    SHOULDER_DOMINANCE = 1.2
-
-    if shoulder_gap < MIN_SHOULDER_GAP and ear_gap < MIN_EAR_GAP:
-        return initial_label
-
-    if ear_gap >= MIN_EAR_GAP and ear_gap >= shoulder_gap * HEAD_RATIO_THRESHOLD:
-        return "head_tilt"
-
-    if shoulder_gap >= MIN_SHOULDER_GAP and shoulder_gap >= ear_gap * SHOULDER_DOMINANCE:
-        return "shoulder_tilt"
-
-    # 모호한 경우에는 기존 RNN 예측 유지
-    return initial_label
-
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"ok": True, "model": os.path.basename(MODEL_PATH)})
