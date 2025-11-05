@@ -144,3 +144,15 @@
     차트를 구성할 수 있습니다.
 
 각 엔드포인트는 JSON 응답을 제공하며, 실패 시 `ok: false`와 함께 위의 에러 코드를 전달합니다. 프런트엔드는 이를 바탕으로 사용자에게 명확한 피드백을 표시할 수 있습니다.
+
+## 개발 팁: 파이썬 모듈 빠르게 문법 점검하기
+
+새로 작성한 서버 스크립트가 파이썬 문법을 충족하는지 빠르게 확인하고 싶다면 [`compileall`](https://docs.python.org/3/library/compileall.html) 모듈을 활용할 수 있습니다.
+
+```bash
+python -m compileall code/server/predictor.py \
+                       code/server/tilt_refinement.py \
+                       code/server/evaluate_rule_based_accuracy.py
+```
+
+위 명령은 지정한 세 파일을 바이트코드로 컴파일해 `.pyc` 파일을 생성합니다. 컴파일 과정에서 문법 오류가 발견되면 어느 파일의 몇 번째 줄에서 문제가 발생했는지 즉시 알려주기 때문에, 테스트를 돌리기 전에 빠르게 문법 오류를 잡는 용도로 유용합니다. 별도의 출력이 없다면 세 파일 모두 성공적으로 컴파일된 것이며, 이미 생성된 `.pyc` 파일은 자동으로 `__pycache__/` 폴더에 저장됩니다.

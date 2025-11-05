@@ -24,6 +24,7 @@ if __package__ in (None, ""):
         register_user,
         store_user_baseline,
     )
+    from tilt_refinement import refine_tilt_prediction
 else:
     from .auth import (
         authenticate_user,
@@ -34,6 +35,7 @@ else:
         register_user,
         store_user_baseline,
     )
+    from .tilt_refinement import refine_tilt_prediction
 
 app = Flask(__name__)
 CORS(app)  # 프론트(127.0.0.1:5173)에서 요청 허용
@@ -65,7 +67,6 @@ def flatten_kp7(kp7):
             return None
         flat.extend([float(x), float(y), float(z)])
     return flat  # len=21
-
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"ok": True, "model": os.path.basename(MODEL_PATH)})
@@ -170,6 +171,17 @@ def predict():
         out = model(x)
         pred_idx = out.argmax(dim=1).item()
         label = label_encoder.inverse_transform([pred_idx])[0]
+
+        probs = torch.softmax(out[0], dim=0)
+        if probs.numel() >= 2:
+            top2 = torch.topk(probs, k=2)
+            margin = (top2.values[0] - top2.values[1]).item()
+        else:
+            margin = 1.0
+
+    if label in {"shoulder_tilt", "head_tilt"}:
+        refined_label = refine_tilt_prediction(label, diffs, initial_margin=margin)
+        label = refined_label
 
     stored, error = record_posture_event(email, label, score=score, recorded_at=recorded_at)
     if not stored:
