@@ -7,20 +7,13 @@
 
 ## 팀원 소개
 ### - 송호진
-- **주요 역할**:
-- **연락처**:
 ### - 김진혁
-- **주요 역할**:
-- **연락처**:
 ### - 박찬호
-- **주요 역할**:
-- **연락처**:
 
 ## 주요 기능
 - **실시간 자세 분석**: 웹캠을 사용하여 사용자의 자세를 실시간으로 분석.
 - **자세 교정 피드백**: 잘못된 자세를 감지하여 올바른 자세를 제안.
 - **기록 기능**: 자세 개선 이력을 저장 및 추적.
-- **사용자 친화적인 인터페이스**: 직관적인 UI 제공.
 
 ## 기술 스택
 - **프로그래밍 언어**: Python
@@ -28,131 +21,111 @@
 - **이미지 처리**: OpenCV
 - **웹캠 사용**: MediaPipe 또는 기타 관련 라이브러리
 
-## 설치 및 실행 방법
-1. 프로젝트를 클론합니다.
-    ```bash
-    git clone https://github.com/사용자명/프로젝트명.git
-    cd 프로젝트명
-    ```
-2. 필요한 패키지를 설치합니다.
-    ```bash
-    pip install -r requirements.txt
-    ```
-3. 프로젝트 루트에서 `code` 폴더로 이동한 뒤 아래 명령어로 서버를 실행합니다.
-    ```bash
-    cd code
-    python -m server.predictor
-    ```
-    위 명령으로 Flask 서버가 구동되면 `/register`·`/login` 엔드포인트와 함께
-    예측 및 통계용 API가 활성화되며, 첫 실행 시 자동으로 `../users.db`
-    데이터베이스 파일이 생성됩니다.
+## 디렉터리 구조
 
-## 인증 및 자세 기록 기능 상세 설명
-
-백엔드는 사용자 계정뿐 아니라 예측 결과를 시간대별로 저장해 프런트에서
-시각화할 수 있도록 아래와 같은 구조를 제공합니다.
-
-### 데이터 저장 방식
-- 프로젝트 루트(`PoseCorrection-back/users.db`)에 SQLite 데이터베이스를 생성합니다.
-- `users` 테이블에는 `email`, `password_hash`, `created_at` 필드를 저장합니다.
-- `posture_logs` 테이블에는 각 예측에 대한 `user_id`, `posture_label`,
-  선택적 `score`, `recorded_at`(ISO8601) 값을 저장합니다.
-- `user_baselines` 테이블에는 사용자별 기준 자세(21개 좌표 배열)와 생성/갱신 시각을 저장합니다.
-- 이메일은 소문자로 정규화한 후 중복 여부를 검사하고, 비밀번호는 해시(SHA-256 기반 Werkzeug 유틸리티)를 적용해 저장합니다.
-
-### 입력 검증 및 에러 코드
-- 이메일/비밀번호가 누락되었거나 문자열이 아닐 경우 `email_and_password_required` 오류를 반환합니다.
-- 이메일이 공백일 때는 `email_required`, 비밀번호 길이가 6자 미만이면 `password_too_short` 오류를 반환합니다.
-- 이미 가입된 이메일은 `email_already_used`, 존재하지 않는 계정 로그인 시 `user_not_found`, 비밀번호 불일치 시 `invalid_credentials` 오류를 제공합니다.
-- `/set_initial` 또는 `/predict` 요청에서 이메일이 없으면 `email_required`,
-  저장된 기준 자세가 없으면 `baseline_not_set`, 손상된 데이터면 `baseline_corrupted`
-  오류를 반환합니다.
-- `/predict` 요청에서 좌표 길이가 잘못되면 `invalid_frames` 또는 `invalid_frame` 오류를 반환합니다.
-- 예측 결과를 저장할 때 이메일이 없으면 `email_required`, 점수 형식이 잘못되면 `invalid_score`, 시간 포맷이 맞지 않으면 `invalid_timestamp` 오류가 발생합니다.
-- `/posture_stats`에서 기간 파라미터가 숫자가 아니거나 0 이하이면 `invalid_days` 오류가 발생합니다.
-
-### REST API 엔드포인트
-- **회원가입**: `POST /register`
-  - Body: `{ "email": "user@example.com", "password": "비밀번호" }`
-  - 성공 시 `{"ok": true, "message": "user_registered"}` 반환
-- **로그인**: `POST /login`
-  - Body: `{ "email": "user@example.com", "password": "비밀번호" }`
-  - 성공 시 `{"ok": true, "message": "login_success"}` 반환
-- **자세 예측 및 기록**: `POST /predict`
-  - Body 예시:
-    ```json
-    {
-      "email": "user@example.com",
-      "frames": [
-        [[x, y, z] * 7],
-        [[x, y, z] * 7],
-        [[x, y, z] * 7]
-      ],
-      "recorded_at": "2024-05-01T13:30:00",
-      "score": 72.3
-    }
-    ```
-  - `email`은 필수이며 가입된 사용자여야 합니다.
-  - `frames`는 최근 3프레임(각 7개 관절)의 좌표를 전달합니다.
-  - `recorded_at`은 생략 시 서버 시간이 기록됩니다. `score`는 프런트에서 계산한
-    (선택적) 자세 점수입니다.
-  - 정상 동작 시 `{ "ok": true, "label": "거북목", "stored": true }`와 같이
-    분류 라벨을 반환하고, 같은 정보가 데이터베이스에 저장됩니다.
-- **기준 자세 저장**: `POST /set_initial`
-  - Body 예시:
-    ```json
-    {
-      "email": "user@example.com",
-      "keypoints": [
-        [x, y, z],
-        [x, y, z],
-        [x, y, z],
-        [x, y, z],
-        [x, y, z],
-        [x, y, z],
-        [x, y, z]
-      ]
-    }
-    ```
-  - Mediapipe 등에서 측정한 7개 관절(x, y, z)을 flatten(21개)하여 사용자별로 저장합니다.
-  - 이미 기준 자세가 있다면 덮어쓰며, 이후 `/predict`에서 자동으로 불러옵니다.
-- **저장 데이터 통계 조회**: `GET /posture_stats?email=user@example.com&days=7`
-  - 가입된 사용자의 최근 `days`일(기본 7일) 동안 기록을 집계합니다.
-  - 응답 예시:
-    ```json
-    {
-      "ok": true,
-      "summary": {
-        "range": {"start": "2024-04-25T00:00:00", "end": "2024-05-02T00:00:00"},
-        "hourly": [
-          {"hour": "08:00", "total": 5, "bad": 2, "avg_score": 74.5},
-          {"hour": "09:00", "total": 3, "bad": 1}
-        ],
-        "weekday": [
-          {"weekday": "월", "total": 8, "bad": 3},
-          {"weekday": "화", "total": 6, "bad": 1}
-        ],
-        "labels": [
-          {"label": "정상", "count": 12},
-          {"label": "거북목", "count": 5}
-        ],
-        "total_events": 20
-      }
-    }
-    ```
-  - `hourly`·`weekday`·`labels` 배열을 이용해 프런트에서 시간대/요일/자세별
-    차트를 구성할 수 있습니다.
-
-각 엔드포인트는 JSON 응답을 제공하며, 실패 시 `ok: false`와 함께 위의 에러 코드를 전달합니다. 프런트엔드는 이를 바탕으로 사용자에게 명확한 피드백을 표시할 수 있습니다.
-
-## 개발 팁: 파이썬 모듈 빠르게 문법 점검하기
-
-새로 작성한 서버 스크립트가 파이썬 문법을 충족하는지 빠르게 확인하고 싶다면 [`compileall`](https://docs.python.org/3/library/compileall.html) 모듈을 활용할 수 있습니다.
-
-```bash
-python -m compileall code/server/predictor.py \
-                       code/server/tilt_refinement.py \
-                       code/server/evaluate_rule_based_accuracy.py
+```
+PoseCorrection-back/
+├── README.md              # 현재 문서
+├── requirements.txt       # 백엔드 실행에 필요한 Python 패키지 목록
+├── code/
+│   ├── server/            # Flask 서버 및 인증/통계 로직
+│   ├── model/             # RNNPostureModel 정의 및 학습된 가중치(.pth)
+│   ├── data/              # PostureDataset 정의 및 학습용 CSV 데이터
+│   ├── train.py           # RNN 모델 학습 스크립트
+│   └── estimate_pose.py   # (보조) 포즈 추정 관련 스크립트
+├── img/                   # 문서나 시연용 이미지 자산
+└── proto/                 # gRPC/Protobuf 정의 (필요 시 사용)
 ```
 
-위 명령은 지정한 세 파일을 바이트코드로 컴파일해 `.pyc` 파일을 생성합니다. 컴파일 과정에서 문법 오류가 발견되면 어느 파일의 몇 번째 줄에서 문제가 발생했는지 즉시 알려주기 때문에, 테스트를 돌리기 전에 빠르게 문법 오류를 잡는 용도로 유용합니다. 별도의 출력이 없다면 세 파일 모두 성공적으로 컴파일된 것이며, 이미 생성된 `.pyc` 파일은 자동으로 `__pycache__/` 폴더에 저장됩니다.
+## 개발 환경 준비
+
+1. **필수 조건**
+   - Python 3.10 이상 (PyTorch 및 Mediapipe 호환 버전 권장)
+   - 가상환경 사용 권장 (`venv`, `conda` 등)
+2. **프로젝트 클론 및 패키지 설치**
+   ```bash
+   git clone https://github.com/<YOUR_ORG>/PoseCorrection-back.git
+   cd PoseCorrection-back
+   python -m venv .venv           # 선택 사항
+   source .venv/bin/activate      # Windows: .venv\Scripts\activate
+   pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
+3. **환경 변수**
+   - 기본 설정은 필요하지 않으며, Flask 서버가 실행되면 자동으로 `users.db` 파일을 생성합니다.
+
+## 서버 실행
+
+```bash
+cd code
+python -m server.predictor
+```
+
+- 기본 실행 포트는 `5000`이며 CORS는 로컬 프런트엔드(예: `http://127.0.0.1:5173`)를 허용하도록 설정되어 있습니다.
+- 첫 실행 시 프로젝트 루트(`PoseCorrection-back/users.db`)에 SQLite 데이터베이스가 생성됩니다.
+- 서버가 정상적으로 구동되면 `/health` 엔드포인트에서 모델 이름과 상태를 확인할 수 있습니다.
+
+## 데이터베이스 구조
+
+| 테이블 | 주요 필드 | 설명 |
+| --- | --- | --- |
+| `users` | `email`, `password_hash`, `created_at` | 사용자 계정 정보 저장. 이메일은 소문자로 정규화하고, 비밀번호는 Werkzeug SHA-256 해시를 사용합니다. |
+| `user_baselines` | `baseline`, `created_at`, `updated_at` | 7개 관절(21개의 float) 기준 자세를 JSON 문자열로 저장하며, 사용자별로 1개만 유지됩니다. |
+| `posture_logs` | `posture_label`, `score`, `recorded_at` | 예측 결과를 시간대별로 기록하고, 점수가 제공되면 평균 점수 계산에 활용합니다. |
+
+## REST API
+
+- 모든 엔드포인트는 JSON을 주고받으며, 실패 시 `{"ok": false, "error": <코드>}` 형태로 응답합니다.
+
+### 인증 및 사용자 관리
+
+| 메서드 | 경로 | 설명 |
+| --- | --- | --- |
+| `POST` | `/register` | `{ "email", "password" }`를 받아 신규 계정을 생성합니다. 비밀번호는 최소 6자입니다. |
+| `POST` | `/login` | 등록된 이메일과 비밀번호로 로그인합니다. 잘못된 자격증명은 `401`, 존재하지 않는 계정은 `404`를 반환합니다. |
+
+### 기준 자세 및 예측
+
+| 메서드 | 경로 | 설명 |
+| --- | --- | --- |
+| `POST` | `/set_initial` | 7개의 3차원 좌표 배열(`keypoints`)을 받아 사용자 기준 자세를 저장합니다. 기존 데이터가 있으면 갱신합니다. |
+| `POST` | `/predict` | 최근 3프레임의 7개 관절 좌표(`frames` 배열)와 선택적 `score`, `recorded_at`을 받아 자세 라벨을 예측하고 저장합니다. |
+| `GET` | `/posture_stats` | `email`과 `days`(기본 7)를 쿼리로 받아 기간별 통계를 반환합니다. |
+
+자세 예측 요청 예시는 다음과 같습니다.
+
+```json
+{
+  "email": "user@example.com",
+  "frames": [
+    [[0.1, 0.2, 0.0], ... 7개],
+    [[0.0, 0.3, -0.1], ... 7개],
+    [[-0.1, 0.1, 0.05], ... 7개]
+  ],
+  "recorded_at": "2024-05-01T13:30:00",
+  "score": 72.3
+}
+```
+
+`shoulder_tilt` 또는 `head_tilt`로 분류된 경우 추가 규칙(`tilt_refinement.py`)을 적용해 결과를 보정합니다.
+
+## 모델 학습 및 평가
+
+### RNN 모델 학습
+
+```bash
+python code/train.py
+```
+
+- `code/data/dataset/posture_chunk_data.csv`를 불러와 학습/검증 데이터로 분리합니다.
+- 학습 과정에서 `code/model/rnn_posture_model2.pth` 파일을 갱신하고, 에폭별 Loss/Accuracy를 출력 및 그래프로 시각화합니다.
+
+### 규칙 보정 평가
+
+훈련된 모델과 동일한 데이터셋을 사용해 규칙 기반 기울기 보정(`tilt_refinement`)이 성능에 미치는 영향을 평가할 수 있습니다.
+
+```bash
+python -m server.evaluate_rule_based_accuracy --batch-size 256
+```
+
+출력에는 RNN 단독 정확도와 보정 후 정확도, 보정에 의해 수정된 케이스 수 등이 포함됩니다.
